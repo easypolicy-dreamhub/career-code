@@ -133,6 +133,11 @@ input[type=text],input[type=tel],input[type=email],input[type=number],input[type
 .pass{color:var(--ok)}.fail{color:var(--bad)}.na{color:var(--muted)}
 .notes{padding-left:1.1em;margin:0 0 1em}
 .notes li{margin-bottom:.6em}
+.plist{list-style:none;padding-left:0}
+.plist li{position:relative;padding-left:1.6em}
+.plist li::before{position:absolute;left:0;font-weight:700}
+.plist li.pg::before{content:"✓";color:var(--ok)}
+.plist li.pw::before{content:"!";color:var(--warn);left:.35em}
 .disclaimer{font-size:.8rem;color:var(--muted);border-top:1px solid var(--line);padding-top:12px;margin-top:8px}
 .print-head{display:none}
 
@@ -514,7 +519,15 @@ en:{
   qOpp:"Of all the jobs and activities you've done, which did you enjoy most and why?",
   flat:x=>`Flat profile: highest and lowest scores are only ${x} points apart. Interests are not strongly defined yet, which is common in younger candidates. Treat the code as tentative.`,
   defined:"Well-defined profile: interests are clear and strongly held.",
-  qFinal:"What attracts you to a commission-based career, and how would you manage your finances in the first six to twelve months?"
+  qFinal:"What attracts you to a commission-based career, and how would you manage your finances in the first six to twelve months?",
+  pattern:"Score pattern", and:" and ",
+  breadthAll:n=>`${n}: all three parts (A, B, C) are 5 or above, so the interest shows in what they like doing, what they can do and the jobs they would consider.`,
+  breadthSome:(n,c,a,b,cc)=>`${n}: ${c} of 3 parts are 5 or above (A ${a}, B ${b}, C ${cc}).`,
+  narrow:(n,a,b,cc)=>`${n} interest shows mainly in one part (A ${a}, B ${b}, C ${cc}). Check whether it is real interest, real skill or only an attraction to the job titles.`,
+  zero:(n,parts)=>`${n} has a 0 in Part ${parts}. The candidate ticked nothing at all there, which is a red flag for this role.`,
+  manyZeros:z=>`${z} of the 18 part scores (A to C across all six types) are 0. The candidate may have rushed or not engaged with the test. Treat the result with caution and consider a retake.`,
+  highAll:x=>`${x} of the 18 part scores are 5 or above. The candidate scored high almost everywhere, so the profile is not well differentiated. Check whether they answered selectively.`,
+  noParts:"Part A to C scores were not entered, so the score pattern checks were skipped."
 },
 zh:{
   title:"顾问备注", criteria:"标准检查", why:"原因", watch:"注意事项", qs:"建议面试问题", hex:"六边形（虚线为25分）",
@@ -548,7 +561,15 @@ zh:{
   qOpp:"在你做过的所有工作和活动中，你最喜欢哪一项？为什么？",
   flat:x=>`特质分布平坦：最高分与最低分只相差${x}分。兴趣尚未明确，这在较年轻的候选人中很常见，请把代码视为参考。`,
   defined:"特质鲜明：兴趣清晰而强烈。",
-  qFinal:"佣金制的职业有什么吸引你？在最初的六至十二个月，你会如何安排自己的财务？"
+  qFinal:"佣金制的职业有什么吸引你？在最初的六至十二个月，你会如何安排自己的财务？",
+  pattern:"分数模式", and:"和",
+  breadthAll:n=>`${n}：A、B、C三个部分均达5分或以上，兴趣同时体现在喜欢的活动、具备的能力和会考虑的职业上。`,
+  breadthSome:(n,c,a,b,cc)=>`${n}：三个部分中有${c}个达5分或以上（A ${a}，B ${b}，C ${cc}）。`,
+  narrow:(n,a,b,cc)=>`${n}的兴趣主要集中在一个部分（A ${a}，B ${b}，C ${cc}）。请了解这是真正的兴趣、实际的能力，还是只是被职业名称吸引。`,
+  zero:(n,parts)=>`${n}在${parts}部分得0分。候选人在这里完全没有勾选，对这个职位来说是一个警号。`,
+  manyZeros:z=>`18个部分分数（六种类型的A至C部分）中有${z}个为0。候选人可能作答匆忙或不够投入。请谨慎看待结果，并考虑重新测试。`,
+  highAll:x=>`18个部分分数中有${x}个达5分或以上。候选人几乎在所有地方都给了高分，特质不够鲜明。请了解他是否有认真筛选作答。`,
+  noParts:"未输入A至C部分的分数，因此跳过分数模式检查。"
 }};
 const A_ = () => ADV[lang];
 
@@ -849,7 +870,26 @@ function assess(s){
   if(spread<10) watch.push(A.flat(spread));
   if(s[r[0]].total>=40 && spread>=25) why.push(A.defined);
   qs.push(A.qFinal);
-  return {v,checks:[S,E,C],why,watch,qs:[...new Set(qs)]};
+
+  // Score pattern: 5+ per part, zeros, overall spread
+  const pattern=[], P=["a","b","c"], hasParts=t=>P.every(k=>s[t][k]!=null);
+  ["S","E","C"].forEach(t=>{
+    if(!hasParts(t)) return;
+    const nm=I_(t).name, v3=P.map(k=>s[t][k]), n5=v3.filter(x=>x>=5).length;
+    const zeros=P.filter(k=>s[t][k]===0).map(k=>k.toUpperCase());
+    if(zeros.length) pattern.push({warn:true, txt:A.zero(nm, zeros.join(A.and))});
+    else if(n5===3) pattern.push({warn:false, txt:A.breadthAll(nm)});
+    else if(n5<=1) pattern.push({warn:true, txt:A.narrow(nm,...v3)});
+    else pattern.push({warn:false, txt:A.breadthSome(nm,n5,...v3)});
+  });
+  if(TYPES.every(hasParts)){
+    const cells=TYPES.flatMap(t=>P.map(k=>s[t][k]));
+    const z=cells.filter(x=>x===0).length, hi=cells.filter(x=>x>=5).length;
+    if(z>=9) pattern.push({warn:true, txt:A.manyZeros(z)});
+    if(hi>=15) pattern.push({warn:true, txt:A.highAll(hi)});
+  }
+  if(!["S","E","C"].some(hasParts)) pattern.push({warn:false, txt:A.noParts});
+  return {v,checks:[S,E,C],why,watch,qs:[...new Set(qs)],pattern};
 }
 function renderAdvisor(){
   const a=assess(state.scores), A=A_(), rules=CONFIG.rules;
@@ -864,6 +904,8 @@ function renderAdvisor(){
     <div class="verdict ${a.v[0]}"><h3>${a.v[1]}</h3><p>${a.v[2]}</p></div>
     <h3>${A.criteria}</h3>
     <table class="checks">${rows}</table>
+    <h3 style="margin-top:18px">${A.pattern}</h3>
+    <ul class="notes plist">${a.pattern.map(x=>`<li class="${x.warn?"pw":"pg"}">${x.txt}</li>`).join("")}</ul>
     <h3 style="margin-top:18px">${A.why}</h3>
     <ul class="notes">${a.why.map(x=>`<li>${x}</li>`).join("")}</ul>
     ${a.watch.length?`<h3>${A.watch}</h3><ul class="notes">${a.watch.map(x=>`<li>${x}</li>`).join("")}</ul>`:""}
